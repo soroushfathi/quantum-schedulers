@@ -26,13 +26,14 @@ class RoundRobinScheduler(Scheduler):
         assignments = []
         backend_count = len(qnodes)
 
-        for task_id, task in enumerate(tasks):
+        for index, task in enumerate(tasks):
+            task_id = task.id
             backend_index = self._counter % backend_count
             backend = qnodes[backend_index]
             logger.debug(
                 f"Assigning task {task_id} to backend index {backend_index} ({getattr(backend, 'name', backend)})."
             )
-            assignments.append((task_id, backend))
+            assignments.append((index, backend))
             self._counter += 1
 
         # Log assignments with task IDs and backend names

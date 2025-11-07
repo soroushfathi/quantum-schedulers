@@ -1,6 +1,9 @@
 from typing import Any
 from src.qschedulers.datasets.calibration_utils import get_gate_error_map
 from .base import Scheduler
+from src.logger_config import setup_logger
+
+logger = setup_logger()
 
 class FDFScheduler(Scheduler):
     """
@@ -9,7 +12,11 @@ class FDFScheduler(Scheduler):
     """
 
     def schedule(self, tasks: list[Any], qnodes: list[Any]) -> dict[str, Any]:
+        logger.info(
+            f"Scheduling {len(tasks)} tasks across {len(qnodes)} qnodes using FDF policy."
+        )
         if not qnodes:
+            logger.info("Initialized FDFScheduler with counter set to 0.")
             raise ValueError("No backends provided for scheduling.")
 
         assignments = []

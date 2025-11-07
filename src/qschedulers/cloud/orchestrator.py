@@ -72,7 +72,9 @@ class Orchestrator:
             yield self.env.timeout(self.schedule_interval)
             
             # Get a batch of tasks
+            print(f'size before deque {self.task_queue.size()}.')
             tasks = self.task_queue.dequeue_batch(self.batch_size)
+            print(f'size after deque {self.task_queue.size()}.')
             if not tasks:
                 logger.debug("No tasks to schedule in this interval")
                 continue
