@@ -14,6 +14,7 @@ from src.qschedulers.schedulers.base import Scheduler
 from src.qschedulers.datasets.calibration_utils import get_gate_error_map
 from src.qschedulers.evaluation.metrics import estimate_fidelity_and_time
 from src.qschedulers.cloud.task_queue import TaskQueue, SimpleTaskQueue, FailedTaskQueue
+from src.qschedulers.cloud.failed_task_exchange_manager import FailedTaskExchangeManager
 from src.logger_config import setup_logger
 
 logger = setup_logger()
@@ -31,7 +32,8 @@ class Orchestrator:
         failed_task_queue: Optional[TaskQueue] = None,
         shots: int = 1024,
         batch_size: int = 5,
-        schedule_interval: float = 10.0
+        schedule_interval: float = 10.0,
+        enable_ttcc: bool = True
     ):
         self.env = env
         self.scheduler = scheduler
@@ -42,6 +44,21 @@ class Orchestrator:
         self.batch_size = batch_size
         self.schedule_interval = schedule_interval
         self.results = []
+        self.enable_ttcc = enable_ttcc
+        
+        # Initialize TTCC-based failed task exchange manager
+        if self.enable_ttcc:
+            self.failed_task_manager = FailedTaskExchangeManager(
+                env=self.env,
+                qnodes=self.qnodes,
+                failed_task_queue=self.failed_task_queue,
+                task_queue=self.task_queue,
+                resubmit_callback=self._resubmit_task_to_resource
+            )
+            logger.info("TTCC-based failed task exchange manager enabled")
+        else:
+            self.failed_task_manager = None
+            logger.info("TTCC-based failed task exchange manager disabled")
         
         # Start the scheduling process
         self.env.process(self._scheduling_loop())
@@ -174,6 +191,11 @@ class Orchestrator:
             "exec_time_est": -1,
             "swap_count": -1,
         })
+        
+        # Trigger TTCC processing if enabled
+        if self.enable_ttcc and self.failed_task_manager:
+            # Trigger immediate processing when a task fails
+            self.env.process(self._trigger_ttcc_processing())
 
     def _record_task_result(
         self, task: QuantumTask, qnode: QuantumNode,
@@ -187,6 +209,10 @@ class Orchestrator:
         if status.lower() != "success":
             task.last_failure_reason = error_message or "Unknown error"
             self.failed_task_queue.enqueue(task)
+            # Trigger TTCC processing if enabled
+            if self.enable_ttcc and self.failed_task_manager:
+                # Trigger immediate processing when a task fails
+                self.env.process(self._trigger_ttcc_processing())
         self.results.append({
             "task_id": task.id,
             "backend": qnode.backend.name,
@@ -203,5 +229,31 @@ class Orchestrator:
                 }
             )
 
+    def _trigger_ttcc_processing(self):
+        """Trigger TTCC processing (as a SimPy process)."""
+        # Small delay to allow other tasks to fail and accumulate
+        yield self.env.timeout(0.1)
+        if self.failed_task_manager:
+            self.failed_task_manager.trigger_immediate_processing()
+    
+    def _resubmit_task_to_resource(self, task: QuantumTask, qnode: QuantumNode) -> None:
+        """
+        Callback function to resubmit a task to a specific resource.
+        This is called by the FailedTaskExchangeManager when TTCC assigns a resource.
+        
+        Args:
+            task: The task to resubmit
+            qnode: The quantum node to resubmit to
+        """
+        logger.info(
+            f"Resubmitting task {task.id} to {qnode.backend.name} "
+            f"via TTCC assignment"
+        )
+        # Update arrival time to current time
+        task.arrival_time = self.env.now
+        task.enqueue_time = self.env.now
+        # Enqueue to main task queue - it will be scheduled normally
+        self.task_queue.enqueue(task)
+    
     def get_results(self):
         return self.results
