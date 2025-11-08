@@ -86,3 +86,11 @@ class SimpleTaskQueue(TaskQueue):
     
     def size(self) -> int:
         return self._queue.qsize()
+
+
+class FailedTaskQueue(SimpleTaskQueue):
+    """Specialized queue for tracking tasks that could not be completed."""
+
+    def enqueue(self, task: QuantumTask) -> None:
+        self._queue.put(task)
+        self.logger.warning(f"Task {task.id} added to failed task queue")

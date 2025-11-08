@@ -1,5 +1,5 @@
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, field
+from typing import Any, Optional
 
 
 @dataclass
@@ -9,6 +9,7 @@ class QuantumTask:
     arrival_time: float = 0.0
     priority: int = 0
     estimated_duration: float = None
+    last_failure_reason: Optional[str] = field(default=None, compare=False)
 
     def __post_init__(self):
         if self.estimated_duration is None:

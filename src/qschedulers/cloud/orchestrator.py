@@ -13,7 +13,7 @@ from src.qschedulers.cloud.qnode import QuantumNode
 from src.qschedulers.schedulers.base import Scheduler
 from src.qschedulers.datasets.calibration_utils import get_gate_error_map
 from src.qschedulers.evaluation.metrics import estimate_fidelity_and_time
-from src.qschedulers.cloud.task_queue import TaskQueue, SimpleTaskQueue
+from src.qschedulers.cloud.task_queue import TaskQueue, SimpleTaskQueue, FailedTaskQueue
 from src.logger_config import setup_logger
 
 logger = setup_logger()
@@ -28,6 +28,7 @@ class Orchestrator:
         scheduler: Scheduler,
         qnodes: List[QuantumNode],
         task_queue: Optional[TaskQueue] = None,
+        failed_task_queue: Optional[TaskQueue] = None,
         shots: int = 1024,
         batch_size: int = 5,
         schedule_interval: float = 10.0
@@ -36,6 +37,7 @@ class Orchestrator:
         self.scheduler = scheduler
         self.qnodes = qnodes
         self.task_queue = task_queue or SimpleTaskQueue()
+        self.failed_task_queue = failed_task_queue or FailedTaskQueue()
         self.shots = shots
         self.batch_size = batch_size
         self.schedule_interval = schedule_interval
@@ -107,8 +109,9 @@ class Orchestrator:
         arrival = getattr(task, 'enqueue_time', task.arrival_time)
 
         if not qnode:
-            logger.warning(f"Task {task.id} failed: No quantum node assigned")
-            self._record_failed_task(task, arrival)
+            failure_message = "No quantum node assigned"
+            logger.warning(f"Task {task.id} failed: {failure_message}")
+            self._record_failed_task(task, arrival, failure_message)
             return None
 
         with qnode.request() as req:
@@ -153,13 +156,15 @@ class Orchestrator:
             
             logger.info(f"Task {task.id} completed with status {status}")
 
-    def _record_failed_task(self, task: QuantumTask, arrival: float) -> None:
+    def _record_failed_task(self, task: QuantumTask, arrival: float, message: str) -> None:
         """Record results for a failed task."""
+        task.last_failure_reason = message
+        self.failed_task_queue.enqueue(task)
         self.results.append({
             "task_id": task.id,
             "backend": "",
             "status": "failed",
-            "message": "No quantum node available",
+            "message": message,
             "arrival_time": arrival,
             "start_time": -1,
             "finish_time": -1,
@@ -179,6 +184,9 @@ class Orchestrator:
         swaps: Optional[int]
     ) -> None:
         """Record the results of a completed task."""
+        if status.lower() != "success":
+            task.last_failure_reason = error_message or "Unknown error"
+            self.failed_task_queue.enqueue(task)
         self.results.append({
             "task_id": task.id,
             "backend": qnode.backend.name,

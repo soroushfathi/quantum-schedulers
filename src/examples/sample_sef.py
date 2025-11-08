@@ -4,6 +4,7 @@ from src.qschedulers.cloud.qnode import QuantumNode
 from src.qschedulers.cloud.qtask import QuantumTask
 from src.qschedulers.schedulers.sef import SEFScheduler
 from src.qschedulers.cloud.orchestrator import Orchestrator
+from src.qschedulers.cloud.task_queue import FailedTaskQueue
 
 if __name__ == "__main__":
     from qiskit_ibm_runtime.fake_provider import FakeHanoiV2, FakeBrisbane
@@ -43,7 +44,8 @@ if __name__ == "__main__":
 
     # Scheduler
     scheduler = SEFScheduler()
-    orch = Orchestrator(env, scheduler, qnodes)
+    failed_q = FailedTaskQueue()
+    orch = Orchestrator(env, scheduler, qnodes, failed_task_queue=failed_q)
 
     orch.submit(tasks)
 
@@ -55,3 +57,13 @@ if __name__ == "__main__":
     # Show results
     for r in results:
         print(r)
+
+    if failed_q.size() > 0:
+        print(f"\nFailed tasks in queue: {failed_q.size()}")
+        preview = []
+        while not failed_q.is_empty() and len(preview) < 5:
+            t = failed_q.dequeue()
+            if t:
+                preview.append((t.id, getattr(t, 'last_failure_reason', None)))
+        if preview:
+            print("Preview of failures (task_id, reason):", preview)

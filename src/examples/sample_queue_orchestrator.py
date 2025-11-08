@@ -12,6 +12,7 @@ from pathlib import Path
 
 from src.Experiments.QNodeFactory import QNodeFactory
 from src.qschedulers.cloud.orchestrator import Orchestrator
+from src.qschedulers.cloud.task_queue import FailedTaskQueue
 from src.qschedulers.cloud.qnode import QuantumNode
 from src.qschedulers.cloud.qtask import QuantumTask
 from src.qschedulers.schedulers.round_robin import RoundRobinScheduler
@@ -46,12 +47,14 @@ def main():
     # Initialize scheduler and orchestrator
     # scheduler = RoundRobinScheduler()
     scheduler = FANScheduler()
+    failed_q = FailedTaskQueue()
     orchestrator = Orchestrator(
         env=env,
         scheduler=scheduler,
         qnodes=qnodes,
-        batch_size=len(qnodes),  # Process 5 tasks at a time
-        schedule_interval=2.0  # Schedule every 10 seconds
+        failed_task_queue=failed_q,
+        batch_size=3,  # Process 5 tasks at a time
+        schedule_interval=10.0  # Schedule every 10 seconds
     )
 
 
@@ -126,6 +129,15 @@ def main():
     logger.info(f"Total tasks: {len(tasks)}")
     logger.info(f"Completed tasks: {completed}")
     logger.info(f"Failed tasks: {failed}")
+    if failed_q.size() > 0:
+        # Preview (up to 5) failed tasks from the queue
+        preview = []
+        while not failed_q.is_empty() and len(preview) < 5:
+            t = failed_q.dequeue()
+            if t:
+                preview.append((t.id, getattr(t, 'last_failure_reason', None)))
+        if preview:
+            logger.info(f"Failed queue contained {len(preview)} example tasks: {preview}")
     
     # Calculate statistics for completed tasks
     completed_df = results_df[results_df['status'] == 'success']
