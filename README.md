@@ -106,6 +106,36 @@ uv run python -m src.examples.sample_cloud
 
 Or open one of the example notebooks under `examples/` in Jupyter.
 
+### 5. Generate Scheduler Performance Visualizations
+
+To generate comprehensive visualization charts for analyzing scheduler performance:
+
+```bash
+uv run python -m src.examples.visualize_scheduler_metrics
+```
+
+This will:
+- Run a simulation with configurable parameters
+- Collect metrics during execution
+- Generate a comprehensive dashboard with 13+ charts including:
+  - Task status distribution
+  - Success vs failure over time
+  - Waiting time and turnaround time distributions
+  - Queue sizes over time
+  - Backend utilization
+  - Fidelity distribution
+  - TTCC failure count distribution
+  - Throughput analysis
+  - And more...
+
+The visualization will be saved to `results/scheduler_metrics_{timestamp}.png` and detailed results to CSV files.
+
+You can customize the simulation in the script:
+- `num_tasks`: Number of tasks to simulate (default: 100)
+- `scheduler_type`: "FAN" or "RoundRobin" (default: "FAN")
+- `enable_ttcc`: Enable/disable TTCC algorithm (default: True)
+- `simulation_time`: Total simulation time (default: 10000)
+
 
 ---
 

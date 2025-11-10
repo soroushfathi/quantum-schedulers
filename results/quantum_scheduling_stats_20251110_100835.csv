@@ -1,0 +1,14 @@
+Metric,Value
+Min Waiting Time,1.6799999999999997
+Max Waiting Time,9.63
+Avg Waiting Time,6.7540000000000004
+Min Turnaround Time,1.6840959999999967
+Max Turnaround Time,9.635376
+Avg Turnaround Time,6.759017599999998
+Min Execution Time,0.004096000000000001
+Max Execution Time,0.0060928
+Avg Execution Time,0.005017600000000001
+Min fidelity,0.9011784036598737
+Max fidelity,0.9694605362958227
+Avg fidelity,0.9416443941108854
+Success Rate (%),100.0
