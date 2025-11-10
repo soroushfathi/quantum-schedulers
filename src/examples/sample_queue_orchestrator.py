@@ -420,7 +420,7 @@ def main():
     from src.Experiments.QTaskFactory import QTaskFactory
     TaskGenerator = QTaskFactory()
     tasks = []
-    n_task = 5
+    n_task = 1000
     for i in range(n_task):
         tasks.append(TaskGenerator.get_a_random_task(i))
 
