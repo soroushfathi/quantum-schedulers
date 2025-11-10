@@ -101,14 +101,30 @@ class FailedTaskExchangeManager:
         for assignment in assignments:
             if assignment.resource is not None:
                 # Resubmit task to assigned resource
+                # Reset failure count on successful assignment
+                assignment.task.ttcc_failure_count = 0
                 self._resubmit_task(assignment.task, assignment.resource)
             else:
-                # Task goes to waiting list - re-enqueue to failed queue for later retry
+                # Task goes to waiting list - increment failure count
+                assignment.task.ttcc_failure_count += 1
                 self.logger.debug(
-                    f"Task {assignment.task.id} assigned to waiting list, "
+                    f"Task {assignment.task.id} assigned to waiting list "
+                    f"(TTCC failure count: {assignment.task.ttcc_failure_count}/3), "
                     "will be retried later"
                 )
-                self.failed_task_queue.enqueue(assignment.task)
+                
+                # If task has failed 3 times in TTCC, move it to main queue
+                if assignment.task.ttcc_failure_count >= 3:
+                    self.logger.warning(
+                        f"Task {assignment.task.id} has failed 3 times in TTCC, "
+                        "moving to main queue"
+                    )
+                    self.task_queue.enqueue(assignment.task)
+                    # Reset count after moving to main queue
+                    assignment.task.ttcc_failure_count = 0
+                else:
+                    # Re-enqueue to failed queue for later retry
+                    self.failed_task_queue.enqueue(assignment.task)
         
         self.logger.info(
             f"TTCC processing complete: {len(assignments)} assignments made, "

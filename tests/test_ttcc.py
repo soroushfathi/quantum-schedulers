@@ -9,12 +9,14 @@ from qiskit import QuantumCircuit
 
 from src.qschedulers.cloud.qtask import QuantumTask
 from src.qschedulers.cloud.qnode import QuantumNode
+from src.qschedulers.cloud.task_queue import SimpleTaskQueue, FailedTaskQueue
 from src.qschedulers.utils.ttcc import TTCCAlgorithm, TTCCAssignment, TTCCState
 from src.qschedulers.utils.compatibility import (
     is_task_compatible_with_resource,
     get_compatible_resources,
     get_task_preference_list
 )
+import simpy
 
 
 class TestTTCCCycleDetection(unittest.TestCase):
@@ -356,6 +358,167 @@ class TestCompatibility(unittest.TestCase):
         result = is_task_compatible_with_resource(large_task, self.qnode)
         
         self.assertFalse(result, "Should not be compatible when qubits are insufficient")
+
+
+class TestTTCCFailureCount(unittest.TestCase):
+    """Test the 3-failure rule: tasks that fail 3 times in TTCC move to main queue."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        # Create mock backend
+        self.backend = Mock()
+        self.backend.name = "test_backend"
+        self.backend.configuration.return_value.n_qubits = 5
+        
+        # Create quantum node
+        self.qnode = Mock(spec=QuantumNode)
+        self.qnode.backend = self.backend
+        
+        self.qnodes = [self.qnode]
+        
+        # Create test circuit
+        self.circuit = QuantumCircuit(3)
+        
+        # Create SimPy environment
+        self.env = simpy.Environment()
+        
+        # Create queues
+        self.failed_queue = FailedTaskQueue()
+        self.main_queue = SimpleTaskQueue()
+    
+    def test_task_moves_to_main_queue_after_3_failures(self):
+        """Test that a task moves to main queue after 3 TTCC failures."""
+        from src.qschedulers.cloud.failed_task_exchange_manager import FailedTaskExchangeManager
+        
+        # Create task with 2 previous failures
+        task = QuantumTask(id=1, circuit=self.circuit, ttcc_failure_count=2)
+        
+        # Add task to failed queue
+        self.failed_queue.enqueue(task)
+        
+        # Create manager
+        manager = FailedTaskExchangeManager(
+            env=self.env,
+            qnodes=self.qnodes,
+            failed_task_queue=self.failed_queue,
+            task_queue=self.main_queue
+        )
+        
+        # Mock TTCC to return waiting list assignment (no resource)
+        with unittest.mock.patch.object(manager.ttcc_algorithm, 'run') as mock_run:
+            # TTCC returns assignment to waiting list (resource=None)
+            mock_run.return_value = [TTCCAssignment(task=task, resource=None)]
+            
+            # Process failed tasks
+            assignments = manager.process_failed_tasks()
+            
+            # Task should have failure count incremented to 3, then reset to 0 after moving to main queue
+            self.assertEqual(task.ttcc_failure_count, 0, "Count should be reset after moving to main queue")
+            
+            # Verify task is not in failed queue (should be empty or not contain this task)
+            # The task should have been moved to main queue
+            failed_queue_tasks = []
+            while not self.failed_queue.is_empty():
+                failed_queue_tasks.append(self.failed_queue.dequeue())
+            self.assertNotIn(task, failed_queue_tasks, "Task should not be in failed queue after 3 failures")
+    
+    def test_task_stays_in_failed_queue_before_3_failures(self):
+        """Test that a task stays in failed queue if failure count < 3."""
+        from src.qschedulers.cloud.failed_task_exchange_manager import FailedTaskExchangeManager
+        
+        # Create task with 1 previous failure
+        task = QuantumTask(id=1, circuit=self.circuit, ttcc_failure_count=1)
+        
+        # Add task to failed queue
+        self.failed_queue.enqueue(task)
+        initial_size = self.failed_queue.size()
+        
+        # Create manager
+        manager = FailedTaskExchangeManager(
+            env=self.env,
+            qnodes=self.qnodes,
+            failed_task_queue=self.failed_queue,
+            task_queue=self.main_queue
+        )
+        
+        # Mock TTCC to return waiting list assignment
+        with unittest.mock.patch.object(manager.ttcc_algorithm, 'run') as mock_run:
+            mock_run.return_value = [TTCCAssignment(task=task, resource=None)]
+            
+            # Process failed tasks
+            manager.process_failed_tasks()
+            
+            # Task should have failure count incremented to 2
+            self.assertEqual(task.ttcc_failure_count, 2, "Failure count should be 2")
+            
+            # Task should still be in failed queue (not moved to main queue)
+            # We verify by checking the count is not reset
+            self.assertNotEqual(task.ttcc_failure_count, 0, "Count should not be reset")
+    
+    def test_task_resets_count_on_successful_assignment(self):
+        """Test that task failure count resets when successfully assigned."""
+        from src.qschedulers.cloud.failed_task_exchange_manager import FailedTaskExchangeManager
+        
+        # Create task with 2 previous failures
+        task = QuantumTask(id=1, circuit=self.circuit, ttcc_failure_count=2)
+        
+        # Add task to failed queue
+        self.failed_queue.enqueue(task)
+        
+        # Create manager
+        manager = FailedTaskExchangeManager(
+            env=self.env,
+            qnodes=self.qnodes,
+            failed_task_queue=self.failed_queue,
+            task_queue=self.main_queue
+        )
+        
+        # Mock TTCC to return successful assignment
+        with unittest.mock.patch.object(manager.ttcc_algorithm, 'run') as mock_run:
+            mock_run.return_value = [TTCCAssignment(task=task, resource=self.qnode)]
+            
+            # Process failed tasks
+            manager.process_failed_tasks()
+            
+            # Task should have failure count reset to 0
+            self.assertEqual(task.ttcc_failure_count, 0, "Failure count should be reset on successful assignment")
+    
+    def test_task_failure_count_tracking(self):
+        """Test that failure count increments correctly through multiple TTCC cycles."""
+        from src.qschedulers.cloud.failed_task_exchange_manager import FailedTaskExchangeManager
+        
+        # Create fresh task
+        task = QuantumTask(id=1, circuit=self.circuit, ttcc_failure_count=0)
+        
+        # Create manager
+        manager = FailedTaskExchangeManager(
+            env=self.env,
+            qnodes=self.qnodes,
+            failed_task_queue=self.failed_queue,
+            task_queue=self.main_queue
+        )
+        
+        # First failure
+        self.failed_queue.enqueue(task)
+        with unittest.mock.patch.object(manager.ttcc_algorithm, 'run') as mock_run:
+            mock_run.return_value = [TTCCAssignment(task=task, resource=None)]
+            manager.process_failed_tasks()
+            self.assertEqual(task.ttcc_failure_count, 1, "First failure should set count to 1")
+        
+        # Second failure
+        self.failed_queue.enqueue(task)
+        with unittest.mock.patch.object(manager.ttcc_algorithm, 'run') as mock_run:
+            mock_run.return_value = [TTCCAssignment(task=task, resource=None)]
+            manager.process_failed_tasks()
+            self.assertEqual(task.ttcc_failure_count, 2, "Second failure should set count to 2")
+        
+        # Third failure - should move to main queue
+        self.failed_queue.enqueue(task)
+        with unittest.mock.patch.object(manager.ttcc_algorithm, 'run') as mock_run:
+            mock_run.return_value = [TTCCAssignment(task=task, resource=None)]
+            manager.process_failed_tasks()
+            # Count should be 0 after moving to main queue
+            self.assertEqual(task.ttcc_failure_count, 0, "Count should reset after 3rd failure moves to main queue")
 
 
 if __name__ == '__main__':
